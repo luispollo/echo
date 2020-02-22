@@ -17,10 +17,11 @@
 package com.netflix.spinnaker.echo.notification
 
 import com.netflix.spinnaker.echo.api.Notification
-import com.netflix.spinnaker.echo.api.Notification.InteractiveActionCallback
+import com.netflix.spinnaker.echo.api.Notification.InteractionCallback
 import com.netflix.spinnaker.echo.controller.EchoResponse
 import org.springframework.http.RequestEntity
 import org.springframework.http.ResponseEntity
+import retrofit.client.Response
 
 interface NotificationService {
   boolean supportsType(Notification.Type type)
@@ -53,17 +54,18 @@ interface InteractiveNotificationService extends NotificationService {
   /**
    * Translate the contents received by echo on the generic notification callbacks API into a generic callback
    * object that can be forwarded to downstream Spinnaker services for actual processing.
-   * @param content
+   * @param request The original callback request from the notification service
    * @return
    */
-  InteractiveActionCallback parseInteractionCallback(RequestEntity<String> request)
+  InteractionCallback parseInteractionCallback(RequestEntity<String> request)
 
   /**
    * Gives an opportunity to the notification service to respond to the original callback in a service-specific
    * manner (e.g. Slack provides a `response_url` in the payload that can be called to interact with the original
    * Slack notification message).
    *
-   * @param content
+   * @param request The original callback request from the notification service
+   * @param downstreamResponse The response returned by the downstream service to process the callback
    */
-  Optional<ResponseEntity<String>> respondToCallback(RequestEntity<String> request)
+  Optional<ResponseEntity<String>> respondToCallback(RequestEntity<String> request, Response downstreamResponse)
 }

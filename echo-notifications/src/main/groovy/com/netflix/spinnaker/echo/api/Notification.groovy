@@ -90,10 +90,29 @@ class Notification {
   }
 
   @Canonical
-  static class InteractiveActionCallback {
-    InteractiveAction actionPerformed
-    String serviceId
-    String messageId
+  static abstract class InteractionCallback {
     String user
+    String serviceId
   }
+
+  @Canonical
+  static class InteractiveActionCallback extends InteractionCallback {
+    InteractiveAction actionPerformed
+    String messageId
+  }
+
+  @Canonical
+  static class CommandCallback extends InteractionCallback {
+    String command
+    String arguments
+
+    String getServiceId() {
+      COMMANDS_TO_SERVICE_IDS[arguments.split(" ")[0]]
+    }
+  }
+
+  static final Map COMMANDS_TO_SERVICE_IDS = [
+    "info": "orca",
+    "md": "keel"
+  ]
 }

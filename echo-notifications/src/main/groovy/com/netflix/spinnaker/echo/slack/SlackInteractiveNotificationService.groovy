@@ -26,9 +26,13 @@ import groovy.util.logging.Slf4j
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.http.RequestEntity
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
+import org.springframework.util.MultiValueMap
+import org.springframework.web.util.UriComponentsBuilder
 import retrofit.RestAdapter
 import retrofit.client.Client
 import retrofit.client.Response
@@ -75,34 +79,35 @@ class SlackInteractiveNotificationService extends SlackNotificationService imple
     this.slackHookService = slackHookService
   }
 
-  private Map parseSlackPayload(String body) {
-    if (!body.startsWith("payload=")) {
-      throw new InvalidRequestException("Missing payload field in Slack callback request.")
-    }
-
-    Map payload = objectMapper.readValue(
-      // Slack requests use application/x-www-form-urlencoded
-      URLDecoder.decode(body.split("payload=")[1], "UTF-8"),
-      Map)
-
-    // currently supporting only interactive actions
-    if (payload.type != "interactive_message") {
-      throw new InvalidRequestException("Unsupported Slack callback type: ${payload.type}")
-    }
-
-    if (!payload.callback_id || !payload.user?.name) {
-      throw new InvalidRequestException("Slack callback_id and user not present. Cannot route the request to originating Spinnaker service.")
-    }
-
-    payload
-  }
-
   @Override
-  Notification.InteractiveActionCallback parseInteractionCallback(RequestEntity<String> request) {
+  Notification.InteractionCallback parseInteractionCallback(RequestEntity<String> request) {
     // Before anything else, verify the signature on the request
     slackAppService.verifySignature(request)
 
-    Map payload = parseSlackPayload(request.getBody())
+    MultiValueMap<String, String> parameters = getParametersFromBody(request)
+
+    if (parameters.payload) {
+      return parseInteractiveActionCallback(parameters.payload)
+    } else if (parameters.command && !parameters.command.isEmpty()) {
+      return parseCommandCallback(parameters)
+    }
+  }
+
+  MultiValueMap<String, String> getParametersFromBody(RequestEntity<String> request) {
+    String body = URLDecoder.decode(request.body, "UTF-8")
+    return UriComponentsBuilder.fromUriString("http://fake/?${body}").build().getQueryParams()
+  }
+
+  Notification.CommandCallback parseCommandCallback(MultiValueMap<String, String> parameters) {
+    new Notification.CommandCallback(
+      user: parameters.user_name[0],
+      command: parameters.command[0],
+      arguments: parameters.text ? parameters.text[0] : ""
+    )
+  }
+
+  private Notification.InteractionCallback parseInteractiveActionCallback(String payloadJson) {
+    Map payload = parseSlackPayload(payloadJson)
     log.debug("Received callback event from Slack of type ${payload.type}")
 
     if (payload.actions.size > 1) {
@@ -136,8 +141,23 @@ class SlackInteractiveNotificationService extends SlackNotificationService imple
   }
 
   @Override
-  Optional<ResponseEntity<String>> respondToCallback(RequestEntity<String> request) {
+  Optional<ResponseEntity<String>> respondToCallback(RequestEntity<String> request, Response downstreamResponse) {
     String body = request.getBody()
+
+    MultiValueMap<String, String> parameters = getParametersFromBody(request)
+
+    if (parameters.command && !parameters.command.isEmpty()) {
+      if (downstreamResponse.body.length() > 0) {
+        String bodyAsString = new InputStreamReader(downstreamResponse.body.in()).readLines().join("\n")
+        return Optional.of(
+          ResponseEntity
+            .status(downstreamResponse.status)
+            .body(blocks: [[type: "section", text: [type: "mrkdwn", text: bodyAsString]]])
+        )
+      }
+      return Optional.empty()
+    }
+
     Map payload = parseSlackPayload(body)
     log.debug("Responding to Slack callback via ${payload.response_url}")
 
@@ -158,6 +178,28 @@ class SlackInteractiveNotificationService extends SlackNotificationService imple
     log.debug("Response from Slack: ${response.toString()}")
 
     return Optional.empty()
+  }
+
+  private Map parseSlackPayload(String body) {
+    if (!body.startsWith("payload=")) {
+      throw new InvalidRequestException("Missing payload field in Slack callback request.")
+    }
+
+    Map payload = objectMapper.readValue(
+      // Slack requests use application/x-www-form-urlencoded
+      URLDecoder.decode(body.split("payload=")[1], "UTF-8"),
+      Map)
+
+    // currently supporting only interactive actions
+    if (payload.type != "interactive_message") {
+      throw new InvalidRequestException("Unsupported Slack callback type: ${payload.type}")
+    }
+
+    if (!payload.callback_id || !payload.user?.name) {
+      throw new InvalidRequestException("Slack callback_id and user not present. Cannot route the request to originating Spinnaker service.")
+    }
+
+    payload
   }
 
   private SlackHookService getSlackHookService(Client retrofitClient) {

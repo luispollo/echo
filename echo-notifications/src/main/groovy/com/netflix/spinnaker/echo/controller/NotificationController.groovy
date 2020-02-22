@@ -67,9 +67,7 @@ class NotificationController {
    * back to echo.
    *
    * @param source The unique ID of the calling notification service (e.g. "slack")
-   * @param headers The request headers
-   * @param rawBody The raw body of the request
-   * @param parameters The request parameters, parsed as a Map
+   * @param request The callback request received from the notification service
    * @return
    */
   @RequestMapping(
